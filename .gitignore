@@ -1,0 +1,9 @@
+pg_data/
+data/sources/
+data/outputs/*.tif*
+.mypy_cache/
+venv/
+.env
+.DS_Store
+.vscode/
+api/__pycache__/
