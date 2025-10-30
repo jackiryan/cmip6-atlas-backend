@@ -1,6 +1,6 @@
 services:
   martin:
-    image: ghcr.io/maplibre/martin:v0.17.0
+    image: ghcr.io/maplibre/martin:martin-v0.19.3
     restart: unless-stopped
     ports:
       - "3000:3000"
@@ -19,7 +19,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - ./pg_data:/var/lib/postgresql/data
+      - ./pg_data:/var/lib/postgresql
       - ./data:/data
     environment:
       - POSTGRES_DB=cmip6_atlas
