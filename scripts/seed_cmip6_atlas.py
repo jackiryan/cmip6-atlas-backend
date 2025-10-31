@@ -215,7 +215,7 @@ def main():
         validate_import(conn)
         
         print("\n✅ Import completed successfully!")
-        print(f"   Martin should now serve tiles at: http://localhost:3000/regions")
+        print(f"   pg_tileserv should now serve tiles at: http://localhost:7800/public.regions.json")
         
     except Exception as e:
         print(f"\n❌ Error: {e}")

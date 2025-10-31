@@ -1,14 +1,16 @@
 services:
-  martin:
-    image: ghcr.io/maplibre/martin:martin-v0.19.3
+  pg-tileserv:
+    image: pramsey/pg_tileserv:latest
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "7800:7800"
     environment:
       - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@cmip6-atlas-db/cmip6_atlas
+      - TS_BASEPATH=/
+      - TS_CORS=*
     volumes:
-      - ./config/martin-config.yaml:/etc/martin/martin-config.yaml
-    command: -c /etc/martin/martin-config.yaml
+      - ./config/pg-tileserv-config.toml:/config/pg-tileserv.toml
+    command: --config /config/pg-tileserv.toml
     depends_on:
       - cmip6-atlas-db
   cmip6-atlas-db:

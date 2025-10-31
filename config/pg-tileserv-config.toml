@@ -1,0 +1,43 @@
+# pg_tileserv configuration for CMIP6 Atlas Backend
+
+# HTTP server configuration
+[Server]
+# Bind to all interfaces on port 7800
+HttpHost = "0.0.0.0"
+HttpPort = 7800
+
+# Cache size in megabytes
+CacheSizeMB = 1024
+
+# CORS settings (allow all origins)
+CORSOrigins = ["*"]
+
+# Base path for the server
+BasePath = "/"
+
+# Database configuration
+[Database]
+# Connection pool size
+DbPoolMinConns = 5
+DbPoolMaxConns = 20
+
+# Tile configuration
+[Tile]
+# Default resolution for tiles
+Resolution = 8
+
+# Default buffer size around tiles (in pixels)
+Buffer = 64
+
+# Clip geometries to tile boundaries
+Clip = true
+
+# Coordinate system configuration
+# EPSG:4326 (WGS84/Geographic) - Equirectangular projection
+# This uses a square extent centered on the globe for the tile pyramid
+[CoordinateSystem]
+SRID = 4326
+Xmin = -180.0
+Ymin = -180.0
+Xmax = 180.0
+Ymax = 180.0
