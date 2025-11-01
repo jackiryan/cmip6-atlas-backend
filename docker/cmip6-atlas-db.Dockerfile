@@ -20,9 +20,10 @@ COPY scripts/ /usr/local/bin/
 
 COPY data/ /data/
 
+RUN chmod +x /usr/local/bin/seed_cmip6_atlas.py /usr/local/bin/seed_climate_metrics.py /docker-entrypoint-initdb.d/02-seed-database.sh
 # Convert line endings to Unix format and set executable permissions
-RUN chmod +x /usr/local/bin/seed_cmip6_atlas.py /docker-entrypoint-initdb.d/02-seed-database.sh \
-    && sed -i 's/\r$//' /docker-entrypoint-initdb.d/02-seed-database.sh \
-    && sed -i 's/\r$//' /usr/local/bin/seed_cmip6_atlas.py
+RUN sed -i 's/\r$//' /docker-entrypoint-initdb.d/02-seed-database.sh \
+    && sed -i 's/\r$//' /usr/local/bin/seed_cmip6_atlas.py \
+    && sed -i 's/\r$//' /usr/local/bin/seed_climate_metrics.py
 
 CMD ["postgres"]
