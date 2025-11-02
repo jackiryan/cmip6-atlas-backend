@@ -191,7 +191,7 @@ class ClimateDataSeeder:
             # Extract year-value pairs from the region object
             for key, value in region.items():
                 # Look for keys that match pattern: <metric>_<year>
-                if key.startswith(f'{metric_code}_') or key.startswith(f'total_{metric_code}_'):
+                if key.startswith(f'{metric_code}_') or key.startswith(f'total_{metric_code}_') or key.startswith(f'mean_{metric_code}_'):
                     year_match = re.search(r'_(\d{4})$', key)
                     if year_match:
                         year = int(year_match.group(1))
