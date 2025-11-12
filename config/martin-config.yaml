@@ -1,9 +1,0 @@
-keep_alive: 75
-listen_addresses: '0.0.0.0:3000'
-worker_processes: 8
-cache_size_mb: 1024
-
-postgres:
-  connection_string: '$DATABASE_URL'
-  default_srid: 4326
-  pool_size: 20
