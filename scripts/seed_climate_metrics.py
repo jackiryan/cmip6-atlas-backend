@@ -59,6 +59,22 @@ class ClimateDataSeeder:
                     UNIQUE(region_id, metric_id, scenario_id, year)
                 );
             """)
+
+            # Create table for averages, this will be populated later
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS climate_averages (
+                    id SERIAL PRIMARY KEY,
+                    region_id INTEGER NOT NULL,
+                    metric_id INTEGER NOT NULL REFERENCES metrics(id),
+                    scenario_id INTEGER NOT NULL REFERENCES scenarios(id),
+                    start_year INTEGER NOT NULL,
+                    end_year INTEGER NOT NULL,
+                    avg_value NUMERIC(12,4),
+                    computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    data_points_count INTEGER, -- Track how many years went into the average
+                    UNIQUE(region_id, metric_id, scenario_id, start_year, end_year)
+                );
+            """)
             
             # Create indexes
             cur.execute("CREATE INDEX IF NOT EXISTS idx_climate_data_region ON climate_data(region_id);")
@@ -66,6 +82,7 @@ class ClimateDataSeeder:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_climate_data_scenario ON climate_data(scenario_id);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_climate_data_year ON climate_data(year);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_climate_data_composite ON climate_data(region_id, metric_id, scenario_id, year);")
+            cur.execute("CREATE INDEX idx_climate_averages_lookup ON climate_averages(region_id, metric_id, scenario_id, start_year, end_year);")
             
             # Create index for performance without foreign key
             cur.execute("CREATE INDEX IF NOT EXISTS idx_climate_data_region_id ON climate_data(region_id);")

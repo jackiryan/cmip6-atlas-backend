@@ -10,6 +10,7 @@ from pydantic import BaseModel
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import os
+import asyncio
 from contextlib import contextmanager, asynccontextmanager
 from datetime import datetime
 
@@ -63,6 +64,17 @@ class YearRange(BaseModel):
     min_year: int
     max_year: int
 
+class MultiYearAverageResponse(BaseModel):
+    region_id: int
+    metric: MetricInfo
+    scenario: ScenarioInfo
+    start_year: int
+    end_year: int
+    average_value: float
+    data_points_count: int
+    cached: bool
+    computed_at: str
+
 # Database connection management
 @contextmanager
 def get_db_connection():
@@ -101,9 +113,25 @@ cache = ReferenceDataCache()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize cache on startup and cleanup on shutdown."""
-    # Startup
-    cache.refresh()
-    print("✅ Reference data cache initialized")
+    # Startup - retry database connection with exponential backoff
+    max_retries = 10
+    retry_delay = 2
+
+    for attempt in range(max_retries):
+        try:
+            print(f"🔄 Attempting to initialize cache (attempt {attempt + 1}/{max_retries})...")
+            cache.refresh()
+            print("✅ Reference data cache initialized")
+            break
+        except psycopg2.OperationalError as e:
+            if attempt < max_retries - 1:
+                print(f"⚠️  Database not ready: {e}. Retrying in {retry_delay} seconds...")
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 1.5, 30)  # Exponential backoff, max 30s
+            else:
+                print(f"❌ Failed to connect to database after {max_retries} attempts")
+                raise
+
     yield
     # Shutdown (if needed in the future)
 
@@ -153,6 +181,96 @@ def convert_to_american_units(value: float, unit: str | None) -> tuple[float, st
 
     # No conversion needed
     return value, unit
+
+# Helper functions for multi-year averaging
+def get_metric_and_scenario_ids(metric_code: str, scenario_code: str) -> tuple[int, int]:
+    """
+    Look up metric_id and scenario_id from their codes.
+    Raises HTTPException if not found.
+    """
+    if metric_code not in cache.metrics:
+        raise HTTPException(status_code=404, detail=f"Metric '{metric_code}' not found")
+
+    if scenario_code not in cache.scenarios:
+        raise HTTPException(status_code=404, detail=f"Scenario '{scenario_code}' not found")
+
+    metric_id = cache.metrics[metric_code]['id']
+    scenario_id = cache.scenarios[scenario_code]['id']
+
+    return metric_id, scenario_id
+
+def get_cached_average(cur, region_id: int, metric_id: int, scenario_id: int,
+                       start_year: int, end_year: int) -> dict | None:
+    """
+    Check if a cached average exists in the climate_averages table.
+    Returns the cached record or None if not found.
+    """
+    cur.execute("""
+        SELECT
+            avg_value,
+            data_points_count,
+            computed_at
+        FROM climate_averages
+        WHERE region_id = %s
+            AND metric_id = %s
+            AND scenario_id = %s
+            AND start_year = %s
+            AND end_year = %s;
+    """, (region_id, metric_id, scenario_id, start_year, end_year))
+
+    result = cur.fetchone()
+    return dict(result) if result else None
+
+def compute_average(cur, region_id: int, metric_id: int, scenario_id: int,
+                   start_year: int, end_year: int) -> tuple[float, int] | None:
+    """
+    Compute the average value from the climate_data table.
+    Returns (avg_value, data_points_count) or None if no data exists.
+    """
+    cur.execute("""
+        WITH yearly_data AS (
+            SELECT
+                cd.year,
+                cd.value
+            FROM climate_data cd
+            WHERE cd.region_id = %s
+                AND cd.metric_id = %s
+                AND cd.scenario_id = %s
+                AND cd.year BETWEEN %s AND %s
+                AND cd.value IS NOT NULL
+        )
+        SELECT
+            AVG(value) as avg_value,
+            COUNT(*) as data_points_count
+        FROM yearly_data;
+    """, (region_id, metric_id, scenario_id, start_year, end_year))
+
+    result = cur.fetchone()
+
+    if result and result['avg_value'] is not None and result['data_points_count'] > 0:
+        return float(result['avg_value']), int(result['data_points_count'])
+
+    return None
+
+def store_computed_average(cur, conn, region_id: int, metric_id: int, scenario_id: int,
+                          start_year: int, end_year: int, avg_value: float,
+                          data_points_count: int):
+    """
+    Store the computed average in the climate_averages table.
+    """
+    cur.execute("""
+        INSERT INTO climate_averages
+            (region_id, metric_id, scenario_id, start_year, end_year,
+             avg_value, data_points_count, computed_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+        ON CONFLICT (region_id, metric_id, scenario_id, start_year, end_year)
+        DO UPDATE SET
+            avg_value = EXCLUDED.avg_value,
+            data_points_count = EXCLUDED.data_points_count,
+            computed_at = CURRENT_TIMESTAMP;
+    """, (region_id, metric_id, scenario_id, start_year, end_year,
+          avg_value, data_points_count))
+    conn.commit()
 
 # API Endpoints
 
@@ -423,6 +541,129 @@ async def get_timeseries(
                 metric=metric_info,
                 scenario=ScenarioInfo(**cache.scenarios[scenario_code]),
                 data=time_series_data
+            )
+
+@app.get("/climate/average/{metric_code}/{scenario_code}/{region_id}",
+         response_model=MultiYearAverageResponse,
+         tags=["Climate Data"])
+async def get_multi_year_average(
+    metric_code: str,
+    scenario_code: str,
+    region_id: int,
+    start_year: int = Query(..., ge=1991, le=2100, description="Start year of the range (1991-2100)"),
+    end_year: int = Query(..., ge=1991, le=2100, description="End year of the range (1991-2100)"),
+    force_recompute: bool = Query(False, description="Force recomputation even if cached value exists"),
+    american: bool = Query(False, description="Convert values to American units (Fahrenheit, inches)")
+):
+    """
+    Get multi-year average climate data for a specific region, metric, and scenario.
+
+    This endpoint computes and caches the average value over a specified year range.
+    Cached values are returned by default for improved performance. Use force_recompute
+    to recalculate the average from raw data.
+
+    Parameters:
+    - metric_code: Climate metric identifier (e.g., 'tas', 'pr')
+    - scenario_code: Climate scenario identifier (e.g., 'ssp245', 'ssp585')
+    - region_id: Numeric identifier for the region
+    - start_year: Beginning year of the averaging period (1991-2100)
+    - end_year: End year of the averaging period (1991-2100)
+    - force_recompute: Force recalculation even if a cached value exists
+    - american: Convert values to American units (Fahrenheit, inches)
+
+    Returns:
+    - region_id: The region identifier
+    - metric: Full metric information including unit
+    - scenario: Full scenario information
+    - start_year: Start of the year range
+    - end_year: End of the year range
+    - average_value: The computed average value
+    - data_points_count: Number of data points used in the calculation
+    - cached: Whether this result was retrieved from cache
+    - computed_at: Timestamp when the average was computed
+    """
+    # Validate year range
+    if start_year > end_year:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid year range: start_year ({start_year}) must be <= end_year ({end_year})"
+        )
+
+    # Look up metric_id and scenario_id
+    metric_id, scenario_id = get_metric_and_scenario_ids(metric_code, scenario_code)
+
+    # Get metric info and determine unit conversion
+    metric_info = MetricInfo(**cache.metrics[metric_code])
+    converted_unit = metric_info.unit
+
+    with get_db_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cached_result = None
+            is_cached = False
+
+            # Check for cached value if not forcing recompute
+            if not force_recompute:
+                cached_result = get_cached_average(
+                    cur, region_id, metric_id, scenario_id, start_year, end_year
+                )
+
+            if cached_result:
+                # Return cached value
+                is_cached = True
+                avg_value = float(cached_result['avg_value'])
+                data_points_count = int(cached_result['data_points_count'])
+                computed_at = cached_result['computed_at'].isoformat()
+            else:
+                # Compute new average
+                result = compute_average(
+                    cur, region_id, metric_id, scenario_id, start_year, end_year
+                )
+
+                if result is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"No data found for region {region_id}, metric '{metric_code}', "
+                               f"scenario '{scenario_code}' in year range {start_year}-{end_year}"
+                    )
+
+                avg_value, data_points_count = result
+
+                # Store the computed average
+                store_computed_average(
+                    cur, conn, region_id, metric_id, scenario_id,
+                    start_year, end_year, avg_value, data_points_count
+                )
+
+                # Get the timestamp of the newly stored record
+                cur.execute("""
+                    SELECT computed_at
+                    FROM climate_averages
+                    WHERE region_id = %s
+                        AND metric_id = %s
+                        AND scenario_id = %s
+                        AND start_year = %s
+                        AND end_year = %s;
+                """, (region_id, metric_id, scenario_id, start_year, end_year))
+
+                timestamp_result = cur.fetchone()
+                computed_at = timestamp_result['computed_at'].isoformat()
+                is_cached = False
+
+            # Apply unit conversion if requested
+            if american:
+                avg_value, converted_unit = convert_to_american_units(avg_value, metric_info.unit)
+                metric_info.unit = converted_unit
+
+            return MultiYearAverageResponse(
+                region_id=region_id,
+                metric=metric_info,
+                scenario=ScenarioInfo(**cache.scenarios[scenario_code]),
+                start_year=start_year,
+                end_year=end_year,
+                average_value=avg_value,
+                data_points_count=data_points_count,
+                cached=is_cached,
+                computed_at=computed_at
             )
 
 @app.get("/regions/{region_id}/all",
