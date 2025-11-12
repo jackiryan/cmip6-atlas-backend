@@ -10,7 +10,7 @@ from pydantic import BaseModel
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import os
-from contextlib import contextmanager
+from contextlib import contextmanager, asynccontextmanager
 from datetime import datetime
 
 # Configuration
@@ -21,22 +21,6 @@ DATABASE_CONFIG = {
     'user': os.getenv('DB_USER', 'postgres'),
     'password': os.getenv('DB_PASSWORD', 'postgres')
 }
-
-# Initialize FastAPI app
-app = FastAPI(
-    title="CMIP6 Atlas Climate Data API",
-    description="API for retrieving climate projection data from CMIP6 models",
-    version="1.0.0"
-)
-
-# Configure CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # Pydantic models
 class MetricInfo(BaseModel):
@@ -113,6 +97,33 @@ class ReferenceDataCache:
 # Initialize cache
 cache = ReferenceDataCache()
 
+# Lifespan event handler
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize cache on startup and cleanup on shutdown."""
+    # Startup
+    cache.refresh()
+    print("✅ Reference data cache initialized")
+    yield
+    # Shutdown (if needed in the future)
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="CMIP6 Atlas Climate Data API",
+    description="API for retrieving climate projection data from CMIP6 models",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Configure appropriately for production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Unit conversion functions
 def celsius_to_fahrenheit(celsius: float) -> float:
     """Convert Celsius to Fahrenheit."""
@@ -142,12 +153,6 @@ def convert_to_american_units(value: float, unit: str | None) -> tuple[float, st
 
     # No conversion needed
     return value, unit
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize cache on startup."""
-    cache.refresh()
-    print("✅ Reference data cache initialized")
 
 # API Endpoints
 

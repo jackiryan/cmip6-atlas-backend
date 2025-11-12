@@ -30,7 +30,7 @@ services:
     build:
       context: .
       dockerfile: docker/climate-api.Dockerfile
-    restart: unless-stopped
+    restart: on-failure:10
     ports:
       - "8000:8000"
     environment:
@@ -42,6 +42,12 @@ services:
     depends_on:
       cmip6-atlas-db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   cmip6-atlas-db:
     build:
