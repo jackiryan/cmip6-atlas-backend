@@ -113,6 +113,36 @@ class ReferenceDataCache:
 # Initialize cache
 cache = ReferenceDataCache()
 
+# Unit conversion functions
+def celsius_to_fahrenheit(celsius: float) -> float:
+    """Convert Celsius to Fahrenheit."""
+    return (float(celsius) * 9/5) + 32
+
+def mm_to_inches(mm: float) -> float:
+    """Convert millimeters to inches."""
+    return float(mm) / 25.4
+
+def convert_to_american_units(value: float, unit: str | None) -> tuple[float, str | None]:
+    """
+    Convert a value to American units if applicable.
+    Returns tuple of (converted_value, new_unit).
+    """
+    if not unit:
+        return value, unit
+
+    unit_lower = unit.lower()
+
+    # Temperature conversions
+    if 'celsius' in unit_lower or unit_lower == '°c' or unit_lower == 'c':
+        return celsius_to_fahrenheit(value), unit.replace('Celsius', 'Fahrenheit').replace('°C', '°F').replace('C', 'F')
+
+    # Precipitation/length conversions
+    if unit_lower == 'mm' or 'millimeter' in unit_lower:
+        return mm_to_inches(value), unit.replace('mm', 'inches').replace('millimeter', 'inch')
+
+    # No conversion needed
+    return value, unit
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize cache on startup."""
@@ -166,7 +196,7 @@ async def get_available_years(metric_code: str, scenario_code: str):
             
             return YearRange(min_year=result['min_year'], max_year=result['max_year'])
 
-@app.get("/climate/{metric_code}/{scenario_code}/{year}", 
+@app.get("/climate/{metric_code}/{scenario_code}/{year}",
          response_model=ClimateDataResponse,
          tags=["Climate Data"])
 async def get_climate_data(
@@ -174,11 +204,12 @@ async def get_climate_data(
     scenario_code: str,
     year: int,
     region_ids: list[int] | None = Query(None, description="Filter by specific region IDs"),
-    include_summary: bool = Query(True, description="Include statistical summary")
+    include_summary: bool = Query(True, description="Include statistical summary"),
+    american: bool = Query(False, description="Convert values to American units (Fahrenheit, inches)")
 ):
     """
     Get climate data for a specific metric, scenario, and year.
-    
+
     This endpoint returns data for all regions (or filtered regions) that can be
     joined client-side with the geometry tiles for visualization.
     """
@@ -217,13 +248,23 @@ async def get_climate_data(
                     status_code=404,
                     detail=f"No data found for {metric_code}/{scenario_code}/{year}"
                 )
-            
-            # Prepare response
-            data_points = [
-                ClimateDataPoint(region_id=row['region_id'], value=row['value'])
-                for row in results
-            ]
-            
+
+            # Get metric info and determine unit conversion
+            metric_info = MetricInfo(**cache.metrics[metric_code])
+            converted_unit = metric_info.unit
+
+            # Prepare response with unit conversion if requested
+            data_points = []
+            for row in results:
+                value = row['value']
+                if american:
+                    value, converted_unit = convert_to_american_units(value, metric_info.unit)
+                data_points.append(ClimateDataPoint(region_id=row['region_id'], value=value))
+
+            # Update metric info with converted unit
+            if american:
+                metric_info.unit = converted_unit
+
             # Calculate summary statistics
             summary = {}
             if include_summary and data_points:
@@ -234,9 +275,9 @@ async def get_climate_data(
                     "mean": sum(values) / len(values),
                     "count": len(values)
                 }
-            
+
             return ClimateDataResponse(
-                metric=MetricInfo(**cache.metrics[metric_code]),
+                metric=metric_info,
                 scenario=ScenarioInfo(**cache.scenarios[scenario_code]),
                 year=year,
                 data=data_points,
@@ -304,7 +345,8 @@ async def get_timeseries(
     scenario_code: str,
     region_id: int,
     start_year: int | None = Query(None, description="Start year for time range"),
-    end_year: int | None = Query(None, description="End year for time range")
+    end_year: int | None = Query(None, description="End year for time range"),
+    american: bool = Query(False, description="Convert values to American units (Fahrenheit, inches)")
 ):
     """
     Get time series data for a specific region, metric, and scenario.
@@ -347,19 +389,35 @@ async def get_timeseries(
             
             cur.execute(query, params)
             results = cur.fetchall()
-            
+
             if not results:
                 raise HTTPException(
                     status_code=404,
                     detail=f"No time series data found for region {region_id}"
                 )
-            
+
+            # Get metric info and determine unit conversion
+            metric_info = MetricInfo(**cache.metrics[metric_code])
+            converted_unit = metric_info.unit
+
+            # Prepare time series data with unit conversion if requested
+            time_series_data = []
+            for row in results:
+                value = row['value']
+                if american:
+                    value, converted_unit = convert_to_american_units(value, metric_info.unit)
+                time_series_data.append(TimeSeriesPoint(year=row['year'], value=value))
+
+            # Update metric info with converted unit
+            if american:
+                metric_info.unit = converted_unit
+
             return TimeSeriesResponse(
                 region_id=region_id,
                 region_identifier=region_identifier,
-                metric=MetricInfo(**cache.metrics[metric_code]),
+                metric=metric_info,
                 scenario=ScenarioInfo(**cache.scenarios[scenario_code]),
-                data=[TimeSeriesPoint(year=row['year'], value=row['value']) for row in results]
+                data=time_series_data
             )
 
 @app.get("/regions/{region_id}/all",
