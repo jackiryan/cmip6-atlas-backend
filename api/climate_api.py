@@ -90,6 +90,11 @@ class MultiYearAverageAllRegionsResponse(BaseModel):
     cached_count: int
     computed_count: int
 
+class RegionCenterResponse(BaseModel):
+    region_id: int
+    longitude: float
+    latitude: float
+
 # Database connection management
 @contextmanager
 def get_db_connection():
@@ -961,6 +966,51 @@ async def get_all_region_data(
                 "region": region_info,
                 "climate_data": organized_data
             }
+
+@app.get("/regions/{region_id}/center",
+         response_model=RegionCenterResponse,
+         tags=["Region Data"])
+async def get_region_center(region_id: int):
+    """
+    Get the center coordinate (centroid) of a region by its region_id.
+
+    This endpoint retrieves the geometry from the regions table and calculates
+    the centroid using PostGIS ST_Centroid function. The result is returned
+    as longitude and latitude coordinates in WGS84 (EPSG:4326).
+
+    Parameters:
+    - region_id: Numeric identifier for the region
+
+    Returns:
+    - region_id: The region identifier
+    - longitude: X coordinate of the centroid
+    - latitude: Y coordinate of the centroid
+    """
+    with get_db_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Query to get the centroid of the region geometry
+            cur.execute("""
+                SELECT
+                    region_id,
+                    ST_X(ST_Centroid(geom)) as longitude,
+                    ST_Y(ST_Centroid(geom)) as latitude
+                FROM regions
+                WHERE region_id = %s;
+            """, (region_id,))
+
+            result = cur.fetchone()
+
+            if not result:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Region with region_id {region_id} not found"
+                )
+
+            return RegionCenterResponse(
+                region_id=result['region_id'],
+                longitude=result['longitude'],
+                latitude=result['latitude']
+            )
 
 if __name__ == "__main__":
     import uvicorn
