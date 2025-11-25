@@ -160,10 +160,30 @@ def validate_import(conn):
         invalid = cur.fetchone()['count']
         if invalid > 0:
             print(f"   ⚠️  Warning: {invalid} invalid geometries found")
+
+            # Get details about invalid geometries
+            cur.execute("""
+                SELECT
+                    region_id,
+                    region_identifier,
+                    source_country_name,
+                    name_1,
+                    name_2,
+                    ST_IsValidReason(geom) as invalid_reason
+                FROM regions
+                WHERE NOT ST_IsValid(geom)
+                ORDER BY region_id;
+            """)
+            print("   \n   Invalid geometries details:")
+            for row in cur.fetchall():
+                region_name = row['name_2'] or row['name_1'] or row['region_identifier'] or f"Region {row['region_id']}"
+                country = row['source_country_name'] or 'Unknown'
+                print(f"     • {region_name} ({country}) - {row['invalid_reason']}")
+
             # Attempt to fix invalid geometries
             cur.execute("UPDATE regions SET geom = ST_MakeValid(geom) WHERE NOT ST_IsValid(geom);")
             conn.commit()
-            print("   ✅ Invalid geometries fixed")
+            print("\n   ✅ Invalid geometries fixed using ST_MakeValid()")
         else:
             print("   ✅ All geometries are valid")
         

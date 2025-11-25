@@ -159,13 +159,13 @@ class ClimateDataSeeder:
         """Process a single JSON file and insert data into database."""
         filename = filepath.name
         print(f"Processing {filename}...")
-        
+
         try:
             metric_code, scenario_code, start_year, end_year = self.parse_filename(filename)
         except ValueError as e:
             print(f"⚠️  Skipping {filename}: {e}")
             return 0
-        
+
         # Get or create metric and scenario IDs
         if metric_code not in self.metric_cache:
             # Auto-create metric if not in reference data
@@ -179,7 +179,7 @@ class ClimateDataSeeder:
                 """, (metric_code, metric_code.replace('_', ' ').title(), 'unknown', f'Auto-generated entry for {metric_code}'))
                 self.metric_cache[metric_code] = cur.fetchone()[0]
                 self.conn.commit()
-        
+
         if scenario_code not in self.scenario_cache:
             # Auto-create scenario if not in reference data
             with self.conn.cursor() as cur:
@@ -192,19 +192,24 @@ class ClimateDataSeeder:
                 """, (scenario_code, scenario_code.upper(), f'Auto-generated entry for {scenario_code}'))
                 self.scenario_cache[scenario_code] = cur.fetchone()[0]
                 self.conn.commit()
-        
+
         metric_id = self.metric_cache[metric_code]
         scenario_id = self.scenario_cache[scenario_code]
-        
+
         # Load JSON data
         with open(filepath, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        
+
+        # Track regions with and without data
+        regions_with_data = set()
+        regions_without_data = []
+
         # Prepare data for bulk insert
         insert_data = []
         for region in data:
             region_id = region['region_id']
-            
+            region_has_data = False
+
             # Extract year-value pairs from the region object
             for key, value in region.items():
                 # Look for keys that match pattern: <metric>_<year>
@@ -214,24 +219,63 @@ class ClimateDataSeeder:
                         year = int(year_match.group(1))
                         if start_year <= year <= end_year and value is not None:
                             insert_data.append((region_id, metric_id, scenario_id, year, value))
-        
+                            region_has_data = True
+
+            # Track regions without data
+            if region_has_data:
+                regions_with_data.add(region_id)
+            else:
+                region_name = region.get('NAME_2') or region.get('NAME_1') or region.get('region_identifier') or f"Region {region_id}"
+                country = region.get('source_country_name') or region.get('COUNTRY') or 'Unknown'
+                regions_without_data.append((region_id, region_name, country))
+
         # Bulk insert using execute_values for efficiency
         with self.conn.cursor() as cur:
-            execute_values(
-                cur,
-                """
-                INSERT INTO climate_data (region_id, metric_id, scenario_id, year, value)
-                VALUES %s
-                ON CONFLICT (region_id, metric_id, scenario_id, year) 
-                DO UPDATE SET value = EXCLUDED.value;
-                """,
-                insert_data,
-                template="(%s, %s, %s, %s, %s)",
-                page_size=1000
-            )
-        
+            if insert_data:
+                execute_values(
+                    cur,
+                    """
+                    INSERT INTO climate_data (region_id, metric_id, scenario_id, year, value)
+                    VALUES %s
+                    ON CONFLICT (region_id, metric_id, scenario_id, year)
+                    DO UPDATE SET value = EXCLUDED.value;
+                    """,
+                    insert_data,
+                    template="(%s, %s, %s, %s, %s)",
+                    page_size=1000
+                )
+
+            # Insert placeholder NULL records for regions without data
+            # This uses the midpoint year as a representative placeholder
+            if regions_without_data:
+                placeholder_year = (start_year + end_year) // 2
+                placeholder_data = [
+                    (region_id, metric_id, scenario_id, placeholder_year, None)
+                    for region_id, _, _ in regions_without_data
+                ]
+
+                execute_values(
+                    cur,
+                    """
+                    INSERT INTO climate_data (region_id, metric_id, scenario_id, year, value)
+                    VALUES %s
+                    ON CONFLICT (region_id, metric_id, scenario_id, year)
+                    DO NOTHING;
+                    """,
+                    placeholder_data,
+                    template="(%s, %s, %s, %s, %s)",
+                    page_size=1000
+                )
+
         self.conn.commit()
+
+        # Report results
         print(f"✅ Inserted {len(insert_data)} data points from {filename}")
+        if regions_without_data:
+            print(f"   ⚠️  {len(regions_without_data)} regions without climate data (NULL placeholders inserted):")
+            for region_id, region_name, country in regions_without_data:
+                print(f"      • Region {region_id}: {region_name} ({country})")
+
         return len(insert_data)
     
     def process_directory(self, directory: Path) -> None:
