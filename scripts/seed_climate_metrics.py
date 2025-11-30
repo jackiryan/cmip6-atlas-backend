@@ -5,8 +5,8 @@ This script processes JSON files with naming convention:
 <metric>_global_<scenario>_<start_year>-<end_year>.json
 """
 import json
-import psycopg2
-from psycopg2.extras import execute_values
+import psycopg2 # type: ignore [import-untyped]
+from psycopg2.extras import execute_values # type: ignore [import-untyped]
 import re
 import sys
 import argparse
@@ -122,6 +122,7 @@ class ClimateDataSeeder:
                 ('ssp370', 'SSP3-7.0', 'Regional Rivalry – A Rocky Road (High challenges to mitigation and adaptation)'),
                 ('ssp585', 'SSP5-8.5', 'Fossil-fueled Development (High challenges to mitigation, low challenges to adaptation)'),
                 ('historical', 'Historical', 'Historical observed and modeled data'),
+                ('era5', 'ERA5-Observational', 'Historical data from observational record modeled with ERA5'),
             ]
             
             for scenario_code, name, description in scenarios_data:

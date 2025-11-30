@@ -7,8 +7,8 @@ returning data that can be joined client-side with the geometry tiles.
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg2 # type: ignore [import-untyped]
+from psycopg2.extras import RealDictCursor # type: ignore [import-untyped]
 import os
 import asyncio
 from contextlib import contextmanager, asynccontextmanager
@@ -859,7 +859,7 @@ async def get_multi_year_average_all_regions(
             if not data_points:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"No data found for the specified region filter"
+                    detail="No data found for the specified region filter"
                 )
 
             # Calculate summary statistics

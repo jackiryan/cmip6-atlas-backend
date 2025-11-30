@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 import json
-import psycopg2
-from psycopg2.extras import RealDictCursor
-from psycopg2.extensions import connection as PostgresConnection
-from shapely.geometry import shape
+import psycopg2 # type: ignore [import-untyped]
+from psycopg2.extras import RealDictCursor # type: ignore [import-untyped]
+from psycopg2.extensions import connection as PostgresConnection # type: ignore [import-untyped]
+from shapely.geometry import shape # type: ignore [import-untyped]
 import sys
 import argparse
 
@@ -140,7 +140,7 @@ def validate_import(conn):
         # Check total count
         cur.execute("SELECT COUNT(*) as count FROM regions;")
         total = cur.fetchone()['count']
-        print(f"\n📊 Validation Results:")
+        print("\n📊 Validation Results:")
         print(f"   Total features: {total}")
         
         # Check admin level distribution
@@ -235,7 +235,7 @@ def main():
         validate_import(conn)
         
         print("\n✅ Import completed successfully!")
-        print(f"   pg_tileserv should now serve tiles at: http://localhost:7800/public.regions.json")
+        print("   pg_tileserv should now serve tiles at: http://localhost:8080/public.regions.json")
         
     except Exception as e:
         print(f"\n❌ Error: {e}")
